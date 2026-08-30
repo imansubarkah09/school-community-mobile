@@ -1,0 +1,77 @@
+# Rilis Android: build APK rilis yang ditandatangani -> publish ke Mobile Release Registry.
+# Jalankan manual dari tab "Actions" -> "release-android" -> "Run workflow".
+name: release-android
+
+on:
+  workflow_dispatch:
+    inputs:
+      versionName:
+        description: "versionName (contoh: 1.1.0)"
+        required: true
+      versionCode:
+        description: "versionCode (angka, harus lebih besar dari yang sekarang)"
+        required: true
+      notes:
+        description: "Catatan rilis, pisahkan dengan tanda | (contoh: Perbaikan unduhan|Deteksi update)"
+        required: false
+      minSupported:
+        description: "minimumSupportedVersion (opsional, default 1)"
+        required: false
+      forceUpdate:
+        description: "Wajibkan update?"
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # untuk commit bump versi kembali ke repo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # ubuntu-latest sudah membawa Android SDK + build-tools. Kalau build gagal karena
+      # SDK, tambahkan langkah: - uses: android-actions/setup-android@v3
+
+      - name: Pulihkan keystore dari secret
+        run: printf '%s' "${{ secrets.SC_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: Build + validasi + publish
+        env:
+          SC_KEYSTORE: ${{ runner.temp }}/release.jks
+          SC_KEYSTORE_PASS: ${{ secrets.SC_KEYSTORE_PASS }}
+          SC_KEY_ALIAS: ${{ secrets.SC_KEY_ALIAS }}
+          SC_KEY_PASS: ${{ secrets.SC_KEY_PASS }}
+          MOBILE_RELEASE_TOKEN: ${{ secrets.MOBILE_RELEASE_TOKEN }}
+          VNAME: ${{ inputs.versionName }}
+          VCODE: ${{ inputs.versionCode }}
+          VNOTES: ${{ inputs.notes }}
+          VMIN: ${{ inputs.minSupported }}
+          VFORCE: ${{ inputs.forceUpdate }}
+        run: |
+          set -euo pipefail
+          args=("$VNAME" "$VCODE")
+          IFS='|' read -ra N <<< "$VNOTES"
+          for n in "${N[@]}"; do [ -n "$n" ] && args+=(--note "$n"); done
+          [ -n "$VMIN" ] && args+=(--min "$VMIN")
+          [ "$VFORCE" = "true" ] && args+=(--force)
+          chmod +x tools/release.sh gradlew
+          tools/release.sh "${args[@]}" --allow-dirty --publish
+
+      - name: Commit bump versi
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "release: v${{ inputs.versionName }} (${{ inputs.versionCode }})" || echo "tidak ada perubahan versi"
+          git push
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ inputs.versionName }}
+          path: app/build/outputs/apk/release/school-community-*.apk
+          if-no-files-found: error

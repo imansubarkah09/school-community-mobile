@@ -1,0 +1,13 @@
+.gradle/
+build/
+local.properties
+*.keystore
+*.jks
+.idea/
+*.iml
+.DS_Store
+
+# Android signing secrets
+*.jks
+*.keystore
+*.b64
