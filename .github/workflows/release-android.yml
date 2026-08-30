@@ -1,8 +1,15 @@
-# Rilis Android: build APK rilis yang ditandatangani -> publish ke Mobile Release Registry.
-# Jalankan manual dari tab "Actions" -> "release-android" -> "Run workflow".
+# Rilis Android: build APK rilis bertanda tangan -> GitHub Release -> publish ke Mobile Release Registry.
+#
+# Dua cara memicu:
+#  1. OTOMATIS  — push tag versi:  git tag v1.1.0 && git push origin v1.1.0
+#                 (build.gradle.kts harus SUDAH di-set ke versi itu, lalu di-commit)
+#  2. MANUAL    — tab Actions -> release-android -> Run workflow (isi versionName + versionCode;
+#                 langkah ini yang meng-update build.gradle.kts + commit)
 name: release-android
 
 on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
     inputs:
       versionName:
@@ -26,7 +33,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # commit bump versi + buat GitHub Release + upload asset APK
+      contents: write # commit bump versi (manual) + buat GitHub Release + upload asset APK
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +42,23 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # ubuntu-latest sudah membawa Android SDK + build-tools + gh CLI. Kalau build gagal
-      # karena SDK, tambahkan langkah: - uses: android-actions/setup-android@v3
+      # ubuntu-latest sudah membawa Android SDK + build-tools + gh CLI.
+
+      - name: Tentukan versi
+        id: v
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            NAME="${GITHUB_REF_NAME#v}"
+            CODE="$(grep -oE 'versionCode = [0-9]+' app/build.gradle.kts | grep -oE '[0-9]+')"
+            echo "no_bump=true" >> "$GITHUB_OUTPUT"
+          else
+            NAME="${{ inputs.versionName }}"
+            CODE="${{ inputs.versionCode }}"
+            echo "no_bump=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
 
       - name: Pulihkan keystore dari secret
         run: printf '%s' "${{ secrets.SC_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
@@ -48,33 +70,34 @@ jobs:
           SC_KEY_ALIAS: ${{ secrets.SC_KEY_ALIAS }}
           SC_KEY_PASS: ${{ secrets.SC_KEY_PASS }}
           MOBILE_RELEASE_PUBLISH_TOKEN: ${{ secrets.MOBILE_RELEASE_PUBLISH_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # untuk `gh release` (upload asset APK)
-          VNAME: ${{ inputs.versionName }}
-          VCODE: ${{ inputs.versionCode }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # untuk `gh release`
+          VNAME: ${{ steps.v.outputs.name }}
+          VCODE: ${{ steps.v.outputs.code }}
+          NO_BUMP: ${{ steps.v.outputs.no_bump }}
           VNOTES: ${{ inputs.notes }}
           VMIN: ${{ inputs.minSupported }}
           VFORCE: ${{ inputs.forceUpdate }}
         run: |
           set -euo pipefail
           args=("$VNAME" "$VCODE")
-          IFS='|' read -ra N <<< "$VNOTES"
+          IFS='|' read -ra N <<< "${VNOTES:-}"
           for n in "${N[@]}"; do [ -n "$n" ] && args+=(--note "$n"); done
-          [ -n "$VMIN" ] && args+=(--min "$VMIN")
-          [ "$VFORCE" = "true" ] && args+=(--force)
+          [ -n "${VMIN:-}" ] && args+=(--min "$VMIN")
+          [ "${VFORCE:-false}" = "true" ] && args+=(--force)
+          [ "$NO_BUMP" = "true" ] && args+=(--no-bump)
           chmod +x tools/release.sh gradlew
           tools/release.sh "${args[@]}" --allow-dirty --publish
 
-      # Bump versi di-commit setelah rilis. Tag v<versionName> menunjuk ke commit
-      # sebelum bump — tidak masalah: versi sudah ter-embed di APK & metadata registry.
-      - name: Commit bump versi
+      - name: Commit bump versi (hanya untuk Run workflow manual)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -am "release: v${{ inputs.versionName }} (${{ inputs.versionCode }})" || echo "tidak ada perubahan versi"
+          git commit -am "release: v${{ steps.v.outputs.name }} (${{ steps.v.outputs.code }})" || echo "tidak ada perubahan versi"
           git push
 
       - uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ inputs.versionName }}
+          name: apk-${{ steps.v.outputs.name }}
           path: app/build/outputs/apk/release/school-community-*.apk
           if-no-files-found: error

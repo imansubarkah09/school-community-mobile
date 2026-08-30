@@ -26,7 +26,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GRADLE_FILE="$ROOT/app/build.gradle.kts"
 
 VERSION_NAME="${1:-}"; VERSION_CODE="${2:-}"; shift $(( $# >= 2 ? 2 : $# )) || true
-FORCE=false; PUBLISH=false; MIN_SUPPORTED=""; ALLOW_DIRTY=false
+FORCE=false; PUBLISH=false; MIN_SUPPORTED=""; ALLOW_DIRTY=false; NO_BUMP=false
 NOTES=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -35,6 +35,7 @@ while [ $# -gt 0 ]; do
     --publish) PUBLISH=true; shift ;;
     --min) MIN_SUPPORTED="$2"; shift 2 ;;
     --allow-dirty) ALLOW_DIRTY=true; shift ;;
+    --no-bump) NO_BUMP=true; shift ;;  # build.gradle.kts already at this version (tag-triggered CI)
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -51,7 +52,13 @@ die() { echo "ERROR: $*" >&2; exit 1; }
   || die "--min must be between 1 and versionCode ($VERSION_CODE)"
 
 CURRENT_CODE="$(grep -oE 'versionCode = [0-9]+' "$GRADLE_FILE" | grep -oE '[0-9]+')"
-[ "$VERSION_CODE" -gt "$CURRENT_CODE" ] || die "versionCode $VERSION_CODE must be > current $CURRENT_CODE"
+CURRENT_NAME="$(grep -oE 'versionName = "[0-9]+\.[0-9]+\.[0-9]+"' "$GRADLE_FILE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+if $NO_BUMP; then
+  [ "$VERSION_CODE" = "$CURRENT_CODE" ] && [ "$VERSION_NAME" = "$CURRENT_NAME" ] \
+    || die "--no-bump: build.gradle.kts is $CURRENT_NAME ($CURRENT_CODE), not $VERSION_NAME ($VERSION_CODE)"
+else
+  [ "$VERSION_CODE" -gt "$CURRENT_CODE" ] || die "versionCode $VERSION_CODE must be > current $CURRENT_CODE"
+fi
 
 if ! $ALLOW_DIRTY && command -v git >/dev/null && git -C "$ROOT" rev-parse >/dev/null 2>&1; then
   [ -z "$(git -C "$ROOT" status --porcelain)" ] || die "working tree is dirty (commit, or pass --allow-dirty)"
@@ -68,9 +75,11 @@ if [ -z "${SC_KEYSTORE:-}" ]; then
   echo "WARN: SC_KEYSTORE unset -> APK will be DEBUG-signed and is NOT suitable for distribution." >&2
 fi
 
-echo ">> setting version $VERSION_NAME ($VERSION_CODE) in build.gradle.kts"
-sed -i -E "s/versionCode = [0-9]+/versionCode = $VERSION_CODE/" "$GRADLE_FILE"
-sed -i -E "s/versionName = \"[0-9]+\.[0-9]+\.[0-9]+\"/versionName = \"$VERSION_NAME\"/" "$GRADLE_FILE"
+if ! $NO_BUMP; then
+  echo ">> setting version $VERSION_NAME ($VERSION_CODE) in build.gradle.kts"
+  sed -i -E "s/versionCode = [0-9]+/versionCode = $VERSION_CODE/" "$GRADLE_FILE"
+  sed -i -E "s/versionName = \"[0-9]+\.[0-9]+\.[0-9]+\"/versionName = \"$VERSION_NAME\"/" "$GRADLE_FILE"
+fi
 
 echo ">> building release APK"
 ( cd "$ROOT" && ./gradlew :app:assembleRelease --no-daemon -q )

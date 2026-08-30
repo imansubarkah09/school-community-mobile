@@ -96,19 +96,32 @@ Buat 5 secret ini (nama harus persis):
 Naikkan **`versionCode`** setiap rilis (angka bulat, selalu +1). `versionName` untuk
 tampilan (1.0.0 → 1.1.0). Sumber tunggal: `app/build.gradle.kts`.
 
-### Opsi 1 — GitHub Action (disarankan)
+> ⚠️ Workflow **tidak** jalan otomatis pada `git push` biasa. Pemicunya: **push tag versi**
+> atau **Run workflow manual**. Kalau belum pernah dijalankan, `/api/mobile/android/latest`
+> masih `404 NO_RELEASE` → HP tidak akan menampilkan notifikasi versi baru.
 
-1. GitHub repo → tab **Actions** → workflow **release-android** → **Run workflow**.
-2. Isi:
-   - `versionName`: `1.1.0`
-   - `versionCode`: `2`
-   - `notes`: `Perbaikan unduhan PDF|Deteksi pembaruan dalam aplikasi`
-   - `forceUpdate`: centang hanya kalau versi lama benar-benar tidak boleh dipakai lagi
-3. **Run**. Action akan: build APK ditandatangani → cek identitas APK (package id,
-   versionCode, versionName) → publish ke registry → commit bump versi kembali ke repo →
-   simpan APK sebagai artifact.
+### Opsi 1 — Push tag versi (otomatis)
 
-### Opsi 2 — dari laptop
+```bash
+# 1. naikkan versi di app/build.gradle.kts (versionCode +1, versionName)
+# 2. commit
+git commit -am "chore: bump ke 1.1.0 (2)"
+# 3. tag + push tag → workflow release-android jalan sendiri
+git tag v1.1.0
+git push origin main --tags
+```
+Workflow: baca `versionName` dari tag + `versionCode` dari `build.gradle.kts` →
+`tools/release.sh … --no-bump --publish` → build APK bertanda tangan → cek identitas →
+`gh release create v1.1.0` + upload APK → publish metadata ke registry.
+(Tidak ada commit balik — `build.gradle.kts` sudah kamu commit sebelum tag.)
+
+### Opsi 2 — Run workflow manual
+
+1. GitHub repo → tab **Actions** → **release-android** → **Run workflow**.
+2. Isi `versionName` (`1.1.0`), `versionCode` (`2`), `notes` (pisah `|`), `forceUpdate` bila perlu.
+3. **Run**. Action yang meng-update `build.gradle.kts` + commit balik ke `main`.
+
+### Opsi 3 — dari laptop
 
 ```bash
 export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
@@ -125,7 +138,8 @@ tools/release.sh 1.1.0 2 --note "Perbaikan unduhan PDF" --publish
 ```
 
 Flag: `--force` (update wajib), `--min <versionCode>` (batas versi minimum didukung),
-`--allow-dirty` (lewati cek git bersih).
+`--allow-dirty` (lewati cek git bersih), `--no-bump` (build.gradle.kts sudah di versi itu —
+dipakai workflow saat dipicu tag).
 
 ---
 
