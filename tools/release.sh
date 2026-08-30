@@ -142,10 +142,10 @@ DRY RUN — not published. To publish (needs the GitHub CLI 'gh', authenticated)
 
   MOBILE_RELEASE_PUBLISH_TOKEN=... tools/release.sh $VERSION_NAME $VERSION_CODE ${note_args}${force_arg}--publish
 
-Publish does:
+Publish does (repo MUST be public):
   1) gh release create/upload $TAG  -> uploads $APK_FILE_NAME as a release asset
   2) apkUrl = https://github.com/<owner>/<repo>/releases/download/$TAG/$APK_FILE_NAME
-  3) curl -sIL apkUrl  -> expect HTTP 200
+  3) curl apkUrl  -> expect HTTP 200
   4) POST $API/releases  (application/json)
        Authorization: Bearer \$MOBILE_RELEASE_PUBLISH_TOKEN
        body: the metadata above, with apkUrl filled in
@@ -159,7 +159,9 @@ command -v gh >/dev/null || die "--publish needs the GitHub CLI (gh), authentica
 SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner)" \
   || die "cannot resolve GitHub repo — run 'gh auth login' / check the 'origin' remote"
 VIS="$(gh repo view --json visibility -q .visibility 2>/dev/null || echo UNKNOWN)"
-[ "$VIS" = "PUBLIC" ] || echo "WARN: repo is $VIS — the Android app downloads apkUrl without a token, so the repo (or a releases mirror) must be PUBLIC." >&2
+# The Android app (and every end user) downloads apkUrl with no auth. A private repo's
+# release assets 404 for anonymous requests, so publishing from one produces a dead apkUrl.
+[ "$VIS" = "PUBLIC" ] || die "repo $SLUG is $VIS. Make it public (Settings → General → Change repository visibility), or host releases in a separate public repo."
 APK_URL="https://github.com/$SLUG/releases/download/$TAG/$APK_FILE_NAME"
 
 echo ">> publishing GitHub Release $TAG (asset: $APK_FILE_NAME)"
@@ -172,7 +174,9 @@ else
 fi
 
 echo ">> verifying asset URL: $APK_URL"
-curl -fsIL -o /dev/null "$APK_URL" || die "release asset not reachable (repo private? asset name mismatch?)"
+# GET (not HEAD): GitHub redirects assets to a signed URL that often rejects HEAD.
+curl -fsL --retry 3 --retry-delay 2 -o /dev/null "$APK_URL" \
+  || die "release asset not reachable at $APK_URL (asset name mismatch, or repo not public)"
 
 echo ">> publishing metadata to $API/releases"
 RESP=/tmp/sc-release-resp.json

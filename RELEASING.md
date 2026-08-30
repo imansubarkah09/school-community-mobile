@@ -15,7 +15,8 @@ cd school-community-mobile
 git init
 git add .
 git commit -m "chore: initial commit"
-gh repo create school-community-mobile --private --source=. --push
+# repo harus PUBLIC — APK di-host sebagai GitHub Release asset yang diunduh app tanpa token
+gh repo create school-community-mobile --public --source=. --push
 # atau buat repo manual di github.com lalu:
 # git remote add origin git@github.com:USER/school-community-mobile.git && git push -u origin main
 ```
