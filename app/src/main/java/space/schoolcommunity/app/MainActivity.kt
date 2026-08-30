@@ -361,8 +361,20 @@ class MainActivity : AppCompatActivity() {
         updateBanner.isVisible = true
     }
 
-    /** Hand the APK URL to the browser / Download manager; user installs manually. */
-    private fun openApk(apkUrl: String) = openExternally(Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)))
+    /**
+     * Download the APK via Android's DownloadManager, not the browser: Chrome's download
+     * UI notoriously stalls at 100% on GitHub release-asset redirects. DownloadManager
+     * follows the redirect, finalizes reliably, and its "download complete" notification
+     * opens the package installer on tap. User still approves the install manually.
+     */
+    private fun openApk(apkUrl: String) {
+        if (!apkUrl.startsWith("https://")) return
+        try {
+            startDownload(apkUrl, webView.settings.userAgentString, "", "application/vnd.android.package-archive")
+        } catch (e: Exception) {
+            openExternally(Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl))) // last resort
+        }
+    }
 
     /** @return true when the URL was handed off elsewhere and the WebView should not load it. */
     private fun handleUrl(request: WebResourceRequest): Boolean {

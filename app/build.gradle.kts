@@ -13,8 +13,8 @@ android {
         targetSdk = 34
         // SINGLE SOURCE OF TRUTH for app version. tools/release.sh bumps these,
         // then publishes the matching metadata to the Mobile Release Registry.
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.1.1"
     }
 
     buildFeatures {
