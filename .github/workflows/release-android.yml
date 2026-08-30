@@ -1,25 +1,22 @@
-# Rilis Android: build APK rilis bertanda tangan -> GitHub Release -> publish ke Mobile Release Registry.
+# Rilis Android otomatis.
 #
-# Dua cara memicu:
-#  1. OTOMATIS  — push tag versi:  git tag v1.1.0 && git push origin v1.1.0
-#                 (build.gradle.kts harus SUDAH di-set ke versi itu, lalu di-commit)
-#  2. MANUAL    — tab Actions -> release-android -> Run workflow (isi versionName + versionCode;
-#                 langkah ini yang meng-update build.gradle.kts + commit)
+# Cara pakai: naikkan versi di app/build.gradle.kts (versionCode +1, versionName),
+# commit, `git push origin main`. Workflow ini:
+#   - versi belum berubah  -> jalan, cek registry, lewati (hijau, tidak ada rilis)
+#   - versionCode naik      -> build APK bertanda tangan -> GitHub Release -> publish
+#                              ke /api/mobile/android/releases -> HP lihat banner update
+#
+# workflow_dispatch dipakai untuk rilis khusus (forceUpdate / minimumSupportedVersion /
+# catatan rilis manual). Versi tetap dibaca dari build.gradle.kts.
 name: release-android
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      versionName:
-        description: "versionName (contoh: 1.1.0)"
-        required: true
-      versionCode:
-        description: "versionCode (angka, harus lebih besar dari yang sekarang)"
-        required: true
       notes:
-        description: "Catatan rilis, pisahkan dengan tanda | (contoh: Perbaikan unduhan|Deteksi update)"
+        description: "Catatan rilis, pisahkan dengan | (kosong = pakai pesan commit)"
         required: false
       minSupported:
         description: "minimumSupportedVersion (opsional, default 1)"
@@ -32,8 +29,9 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
     permissions:
-      contents: write # commit bump versi (manual) + buat GitHub Release + upload asset APK
+      contents: write # buat GitHub Release + upload asset APK
     steps:
       - uses: actions/checkout@v4
 
@@ -42,62 +40,46 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # ubuntu-latest sudah membawa Android SDK + build-tools + gh CLI.
-
-      - name: Tentukan versi
+      - name: Baca versi + catatan
         id: v
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
-            NAME="${GITHUB_REF_NAME#v}"
-            CODE="$(grep -oE 'versionCode = [0-9]+' app/build.gradle.kts | grep -oE '[0-9]+')"
-            echo "no_bump=true" >> "$GITHUB_OUTPUT"
-          else
-            NAME="${{ inputs.versionName }}"
-            CODE="${{ inputs.versionCode }}"
-            echo "no_bump=false" >> "$GITHUB_OUTPUT"
-          fi
+          NAME="$(grep -oE 'versionName = "[0-9]+\.[0-9]+\.[0-9]+"' app/build.gradle.kts | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          CODE="$(grep -oE 'versionCode = [0-9]+' app/build.gradle.kts | grep -oE '[0-9]+')"
+          NOTES="${{ inputs.notes }}"
+          [ -n "$NOTES" ] || NOTES="$(git log -1 --pretty=%s)"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
 
       - name: Pulihkan keystore dari secret
         run: printf '%s' "${{ secrets.SC_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
 
-      - name: Build + validasi + publish
+      - name: Build + validasi + publish (atau lewati kalau versi belum naik)
         env:
           SC_KEYSTORE: ${{ runner.temp }}/release.jks
           SC_KEYSTORE_PASS: ${{ secrets.SC_KEYSTORE_PASS }}
           SC_KEY_ALIAS: ${{ secrets.SC_KEY_ALIAS }}
           SC_KEY_PASS: ${{ secrets.SC_KEY_PASS }}
           MOBILE_RELEASE_PUBLISH_TOKEN: ${{ secrets.MOBILE_RELEASE_PUBLISH_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # untuk `gh release`
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VNAME: ${{ steps.v.outputs.name }}
           VCODE: ${{ steps.v.outputs.code }}
-          NO_BUMP: ${{ steps.v.outputs.no_bump }}
-          VNOTES: ${{ inputs.notes }}
+          VNOTES: ${{ steps.v.outputs.notes }}
           VMIN: ${{ inputs.minSupported }}
           VFORCE: ${{ inputs.forceUpdate }}
         run: |
           set -euo pipefail
-          args=("$VNAME" "$VCODE")
+          args=("$VNAME" "$VCODE" --no-bump --allow-dirty --publish)
           IFS='|' read -ra N <<< "${VNOTES:-}"
           for n in "${N[@]}"; do [ -n "$n" ] && args+=(--note "$n"); done
           [ -n "${VMIN:-}" ] && args+=(--min "$VMIN")
           [ "${VFORCE:-false}" = "true" ] && args+=(--force)
-          [ "$NO_BUMP" = "true" ] && args+=(--no-bump)
           chmod +x tools/release.sh gradlew
-          tools/release.sh "${args[@]}" --allow-dirty --publish
-
-      - name: Commit bump versi (hanya untuk Run workflow manual)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -am "release: v${{ steps.v.outputs.name }} (${{ steps.v.outputs.code }})" || echo "tidak ada perubahan versi"
-          git push
+          tools/release.sh "${args[@]}"
 
       - uses: actions/upload-artifact@v4
+        if: hashFiles('app/build/outputs/apk/release/school-community-*.apk') != ''
         with:
           name: apk-${{ steps.v.outputs.name }}
           path: app/build/outputs/apk/release/school-community-*.apk
-          if-no-files-found: error

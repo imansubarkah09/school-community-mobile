@@ -64,11 +64,11 @@ if ! $ALLOW_DIRTY && command -v git >/dev/null && git -C "$ROOT" rev-parse >/dev
   [ -z "$(git -C "$ROOT" status --porcelain)" ] || die "working tree is dirty (commit, or pass --allow-dirty)"
 fi
 
-# Don't reuse a versionCode already in the registry.
-if command -v curl >/dev/null; then
-  if curl -fsS "$API/releases" 2>/dev/null | grep -q "\"versionCode\":$VERSION_CODE\b"; then
-    die "versionCode $VERSION_CODE is already published"
-  fi
+# Don't reuse a versionCode already in the registry. With --no-bump (push-to-main CI on
+# a commit that didn't touch the version) this is normal -> skip quietly, don't fail.
+if command -v curl >/dev/null && curl -fsS "$API/releases" 2>/dev/null | grep -q "\"versionCode\":$VERSION_CODE\b"; then
+  $NO_BUMP && { echo ">> versionCode $VERSION_CODE sudah dipublish — tidak ada versi baru, lewati."; exit 0; }
+  die "versionCode $VERSION_CODE is already published"
 fi
 
 if [ -z "${SC_KEYSTORE:-}" ]; then

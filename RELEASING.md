@@ -93,33 +93,26 @@ Buat 5 secret ini (nama harus persis):
 
 ## B. Setiap kali rilis versi baru
 
-Naikkan **`versionCode`** setiap rilis (angka bulat, selalu +1). `versionName` untuk
-tampilan (1.0.0 → 1.1.0). Sumber tunggal: `app/build.gradle.kts`.
+Sumber tunggal versi: `app/build.gradle.kts` (`versionCode` / `versionName`).
 
-> ⚠️ Workflow **tidak** jalan otomatis pada `git push` biasa. Pemicunya: **push tag versi**
-> atau **Run workflow manual**. Kalau belum pernah dijalankan, `/api/mobile/android/latest`
-> masih `404 NO_RELEASE` → HP tidak akan menampilkan notifikasi versi baru.
-
-### Opsi 1 — Push tag versi (otomatis)
+### Opsi 1 — push ke main (otomatis)
 
 ```bash
-# 1. naikkan versi di app/build.gradle.kts (versionCode +1, versionName)
-# 2. commit
-git commit -am "chore: bump ke 1.1.0 (2)"
-# 3. tag + push tag → workflow release-android jalan sendiri
-git tag v1.1.0
-git push origin main --tags
+# 1. di app/build.gradle.kts: versionCode = 2, versionName = "1.1.0"
+git commit -am "Tarik untuk muat ulang + banner update"   # pesan commit = catatan rilis
+git push origin main
 ```
-Workflow: baca `versionName` dari tag + `versionCode` dari `build.gradle.kts` →
-`tools/release.sh … --no-bump --publish` → build APK bertanda tangan → cek identitas →
-`gh release create v1.1.0` + upload APK → publish metadata ke registry.
-(Tidak ada commit balik — `build.gradle.kts` sudah kamu commit sebelum tag.)
+Workflow `release-android` jalan tiap push ke `main`:
+- **versi belum naik** → cek registry, **lewati** (run hijau, tidak ada rilis).
+- **versionCode naik** → build APK bertanda tangan → cek identitas → `gh release create v1.1.0`
+  + upload APK → `POST /api/mobile/android/releases`. HP yang masih v1 langsung lihat banner.
 
-### Opsi 2 — Run workflow manual
+Catatan rilis diambil dari **subject commit** terakhir (atau isi `notes` di Run workflow).
 
-1. GitHub repo → tab **Actions** → **release-android** → **Run workflow**.
-2. Isi `versionName` (`1.1.0`), `versionCode` (`2`), `notes` (pisah `|`), `forceUpdate` bila perlu.
-3. **Run**. Action yang meng-update `build.gradle.kts` + commit balik ke `main`.
+### Opsi 2 — Run workflow manual (rilis khusus)
+
+Actions → **release-android** → **Run workflow**. Versi tetap dibaca dari `build.gradle.kts`;
+input hanya untuk `forceUpdate`, `minimumSupportedVersion`, dan `notes`.
 
 ### Opsi 3 — dari laptop
 
