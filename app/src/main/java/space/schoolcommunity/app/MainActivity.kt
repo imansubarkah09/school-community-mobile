@@ -37,6 +37,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.appcompat.app.AlertDialog
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import space.schoolcommunity.app.update.Release
@@ -115,6 +116,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var webView: WebView
+    private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var errorView: View
     private lateinit var progressBar: View
     private lateinit var updateBanner: View
@@ -150,6 +152,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         webView = findViewById(R.id.web_view)
+        swipeRefresh = findViewById(R.id.swipe_refresh)
+        swipeRefresh.setOnRefreshListener { webView.reload() }
         errorView = findViewById(R.id.error_view)
         progressBar = findViewById(R.id.progress_bar)
         updateBanner = findViewById(R.id.update_banner)
@@ -199,11 +203,12 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 loadFailed = false
-                progressBar.isVisible = true
+                progressBar.isVisible = !swipeRefresh.isRefreshing // swipe spinner already visible
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progressBar.isVisible = false
+                swipeRefresh.isRefreshing = false
                 if (!loadFailed) errorView.isVisible = false
                 if (Uri.parse(url).host?.let { it == APP_HOST || it.endsWith(".$APP_HOST") } == true) {
                     view?.evaluateJavascript(BLOB_DOWNLOAD_JS, null)
@@ -218,6 +223,7 @@ class MainActivity : AppCompatActivity() {
                 if (request.isForMainFrame) {
                     loadFailed = true
                     progressBar.isVisible = false
+                    swipeRefresh.isRefreshing = false
                     errorView.isVisible = true
                 } else {
                     debug("subframe error ${error.errorCode} ${request.url.toString().take(60)}")

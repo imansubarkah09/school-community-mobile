@@ -61,6 +61,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.2")
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0") // pull-to-refresh
     // WebViewCompat.addDocumentStartJavaScript — inject the download shim before page scripts run.
     implementation("androidx.webkit:webkit:1.11.0")
 
