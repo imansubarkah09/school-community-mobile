@@ -11,15 +11,10 @@
     <string name="dl_complete">Unduhan selesai</string>
     <string name="open_with">Buka dengan</string>
 
-    <string name="update_available_title">Versi Baru Tersedia</string>
-    <string name="update_mandatory_title">Pembaruan Diperlukan</string>
-    <string name="update_optional_body">School Community versi %1$s sudah tersedia.</string>
-    <string name="update_mandatory_body">Versi aplikasi yang Anda gunakan sudah tidak didukung. Silakan perbarui aplikasi untuk melanjutkan.</string>
-    <string name="update_later">Nanti</string>
-    <string name="update_now">Update Sekarang</string>
-    <string name="update_downloading">Mengunduh pembaruan…</string>
-    <string name="update_download_failed">Unduhan pembaruan gagal. Periksa koneksi internet Anda lalu coba lagi.</string>
-    <string name="update_corrupt">Berkas pembaruan tidak valid. Silakan coba lagi.</string>
-    <string name="update_need_install_permission">Izinkan pemasangan aplikasi dari sumber ini, lalu tekan Update Sekarang.</string>
-    <string name="update_installing">Membuka pemasang aplikasi…</string>
+    <string name="update_mandatory_title">Wajib Perbarui</string>
+    <string name="update_mandatory_body">Versi aplikasi yang Anda gunakan sudah tidak didukung. Silakan perbarui untuk melanjutkan.</string>
+    <string name="update_now">Perbarui Sekarang</string>
+    <string name="update_banner_text">Versi baru tersedia (v%1$s)</string>
+    <string name="update_banner_action">Perbarui</string>
+    <string name="update_banner_dismiss">Tutup</string>
 </resources>

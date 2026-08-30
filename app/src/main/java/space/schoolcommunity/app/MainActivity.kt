@@ -39,8 +39,8 @@ import androidx.core.view.isVisible
 import androidx.appcompat.app.AlertDialog
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import space.schoolcommunity.app.update.Release
 import space.schoolcommunity.app.update.ReleaseApi
-import space.schoolcommunity.app.update.UpdateActivity
 import space.schoolcommunity.app.update.UpdateDecision
 import space.schoolcommunity.app.update.UpdateType
 import java.io.File
@@ -54,8 +54,10 @@ import java.io.FileOutputStream
 class MainActivity : AppCompatActivity() {
 
     private companion object {
-        const val START_URL = "https://schoolcommunity.space/"
+        const val BASE_URL = "https://schoolcommunity.space"
         const val APP_HOST = "schoolcommunity.space"
+        // better-auth session cookie; present ~= user is (or was) logged in.
+        const val SESSION_COOKIE = "better-auth.session_token"
 
         // Flip to true to surface which code path handles a download attempt, as toasts.
         const val DEBUG_DOWNLOADS = false
@@ -115,6 +117,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var errorView: View
     private lateinit var progressBar: View
+    private lateinit var updateBanner: View
+    private lateinit var updateBannerText: android.widget.TextView
+    private lateinit var updateBannerAction: View
+    private lateinit var updateBannerClose: View
 
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingDownload: (() -> Unit)? = null
@@ -146,6 +152,10 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.web_view)
         errorView = findViewById(R.id.error_view)
         progressBar = findViewById(R.id.progress_bar)
+        updateBanner = findViewById(R.id.update_banner)
+        updateBannerText = findViewById(R.id.update_banner_text)
+        updateBannerAction = findViewById(R.id.update_banner_action)
+        updateBannerClose = findViewById(R.id.update_banner_close)
         findViewById<View>(R.id.retry_button).setOnClickListener {
             errorView.isVisible = false
             webView.reload()
@@ -284,15 +294,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        if (savedInstanceState == null) {
-            webView.loadUrl(START_URL)
-            checkForUpdate()
-        }
+        if (savedInstanceState == null) webView.loadUrl(startUrl())
+        // checkForUpdate() runs in onResume — covers both cold launch and return-from-background.
     }
 
-    private var optionalUpdatePrompted = false
+    override fun onResume() {
+        super.onResume()
+        checkForUpdate()
+    }
 
-    /** Non-blocking: read the release registry off-thread; a failure just does nothing. */
+    /** Cold-launch target: straight to the dashboard when a session cookie exists. */
+    private fun startUrl(): String {
+        val cookies = CookieManager.getInstance().getCookie(BASE_URL)
+        return if (cookies?.contains(SESSION_COOKIE) == true) "$BASE_URL/dashboard" else "$BASE_URL/"
+    }
+
+    private var mandatoryDialog: AlertDialog? = null
+    private var optionalBannerDismissed = false
+
+    /** Off-thread read of the release registry; any failure just does nothing. Not cached. */
     private fun checkForUpdate() {
         Thread {
             val decision = UpdateDecision.of(
@@ -307,29 +327,36 @@ class MainActivity : AppCompatActivity() {
         val release = decision.release ?: return
         when (decision.type) {
             UpdateType.NONE -> Unit
-            UpdateType.MANDATORY -> startActivity(UpdateActivity.intent(this, decision))
-            UpdateType.OPTIONAL -> {
-                if (optionalUpdatePrompted) return
-                val prefs = getSharedPreferences("update", MODE_PRIVATE)
-                if (prefs.getLong("snoozed_version_code", -1L) == release.versionCode) return
-                optionalUpdatePrompted = true
-                val notes = release.releaseNotes.joinToString("\n") { "• $it" }
-                AlertDialog.Builder(this)
-                    .setTitle(R.string.update_available_title)
-                    .setMessage(
-                        getString(R.string.update_optional_body, release.versionName) +
-                            if (notes.isNotEmpty()) "\n\n$notes" else "",
-                    )
-                    .setNegativeButton(R.string.update_later) { _, _ ->
-                        prefs.edit().putLong("snoozed_version_code", release.versionCode).apply()
-                    }
-                    .setPositiveButton(R.string.update_now) { _, _ ->
-                        startActivity(UpdateActivity.intent(this, decision))
-                    }
-                    .show()
-            }
+            UpdateType.MANDATORY -> showMandatoryUpdate(release)
+            UpdateType.OPTIONAL -> showUpdateBanner(release)
         }
     }
+
+    private fun showMandatoryUpdate(release: Release) {
+        if (mandatoryDialog?.isShowing == true) return
+        val body = release.releaseNotes.joinToString("\n") { "• $it" }
+            .ifBlank { getString(R.string.update_mandatory_body) }
+        mandatoryDialog = AlertDialog.Builder(this)
+            .setCancelable(false)
+            .setTitle(R.string.update_mandatory_title)
+            .setMessage(body)
+            .setPositiveButton(R.string.update_now) { _, _ -> openApk(release.apkUrl) }
+            .show()
+    }
+
+    private fun showUpdateBanner(release: Release) {
+        if (optionalBannerDismissed) return
+        updateBannerText.text = getString(R.string.update_banner_text, release.versionName)
+        updateBannerAction.setOnClickListener { openApk(release.apkUrl) }
+        updateBannerClose.setOnClickListener {
+            optionalBannerDismissed = true
+            updateBanner.isVisible = false
+        }
+        updateBanner.isVisible = true
+    }
+
+    /** Hand the APK URL to the browser / Download manager; user installs manually. */
+    private fun openApk(apkUrl: String) = openExternally(Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)))
 
     /** @return true when the URL was handed off elsewhere and the WebView should not load it. */
     private fun handleUrl(request: WebResourceRequest): Boolean {

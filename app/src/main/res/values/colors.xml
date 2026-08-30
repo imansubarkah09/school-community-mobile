@@ -1,3 +1,5 @@
 <resources>
     <color name="ic_launcher_background">#1565C0</color>
+    <color name="banner_bg">#1565C0</color>
+    <color name="banner_fg">#FFFFFF</color>
 </resources>

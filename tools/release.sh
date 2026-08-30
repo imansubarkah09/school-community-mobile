@@ -11,9 +11,13 @@
 # Required env for a signed build:
 #   SC_KEYSTORE, SC_KEYSTORE_PASS, SC_KEY_ALIAS, SC_KEY_PASS   (see README "Release signing")
 #   JAVA_HOME            (JDK 17+, e.g. Android Studio's jbr)
-# Required env for --publish:
-#   MOBILE_RELEASE_TOKEN  authenticated write token for POST /api/mobile/android/releases
-#                         (never commit this; keep it in the shell / CI secrets)
+# Required for --publish:
+#   MOBILE_RELEASE_PUBLISH_TOKEN  Bearer token for POST /api/mobile/android/releases
+#                                 (same value as the web app's env var; ask the owner)
+#   gh (GitHub CLI), authenticated — uploads the APK as a GitHub Release asset.
+#     In CI: `env: GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` (already available).
+#   The repo (or a public "releases mirror") must be PUBLIC so the Android app can
+#   download the asset without a token.
 #
 set -euo pipefail
 
@@ -42,6 +46,9 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 [[ "$VERSION_CODE" =~ ^[0-9]+$ ]] || die "versionCode must be a positive integer"
 [ -z "$MIN_SUPPORTED" ] || [[ "$MIN_SUPPORTED" =~ ^[0-9]+$ ]] || die "--min must be an integer"
 : "${MIN_SUPPORTED:=1}"
+# Contract: 1 <= minimumSupportedVersion <= versionCode
+[ "$MIN_SUPPORTED" -ge 1 ] && [ "$MIN_SUPPORTED" -le "$VERSION_CODE" ] \
+  || die "--min must be between 1 and versionCode ($VERSION_CODE)"
 
 CURRENT_CODE="$(grep -oE 'versionCode = [0-9]+' "$GRADLE_FILE" | grep -oE '[0-9]+')"
 [ "$VERSION_CODE" -gt "$CURRENT_CODE" ] || die "versionCode $VERSION_CODE must be > current $CURRENT_CODE"
@@ -87,20 +94,25 @@ if [ ${#NOTES[@]} -gt 0 ]; then
   notes_json="$(printf '%s\n' "${NOTES[@]}" | sed 's/"/\\"/g;s/.*/"&"/' | paste -sd, -)"
   notes_json="[$notes_json]"
 fi
-PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-META="$(cat <<JSON
+PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+APK_FILE_NAME="school-community-$VERSION_NAME.apk"
+# apkUrl is filled in after the GitHub Release upload; placeholder for the dry-run print.
+build_meta() { # $1 = apkUrl
+  cat <<JSON
 {
-  "platform": "android",
   "versionName": "$VERSION_NAME",
   "versionCode": $VERSION_CODE,
+  "apkUrl": "${1:-<diisi dari GitHub Release asset>}",
+  "fileName": "$APK_FILE_NAME",
+  "applicationName": "School Community",
   "minimumSupportedVersion": $MIN_SUPPORTED,
-  "fileName": "school-community-$VERSION_NAME.apk",
-  "publishedAt": "$PUBLISHED_AT",
   "releaseNotes": $notes_json,
-  "forceUpdate": $FORCE
+  "forceUpdate": $FORCE,
+  "publishedAt": "$PUBLISHED_AT"
 }
 JSON
-)"
+}
+META="$(build_meta "")"
 
 echo
 echo "================= RELEASE SUMMARY ================="
@@ -110,34 +122,65 @@ echo " versionCode: $VERSION_CODE   (min supported: $MIN_SUPPORTED, forceUpdate:
 echo " metadata   :"; echo "$META" | sed 's/^/   /'
 echo "=================================================="
 
+TAG="v$VERSION_NAME"
+
 if ! $PUBLISH; then
   note_args=""; [ ${#NOTES[@]} -gt 0 ] && note_args="$(printf -- '--note "%s" ' "${NOTES[@]}")"
   force_arg=""; $FORCE && force_arg="--force "
   cat <<EOF
 
-DRY RUN — not published. To publish:
+DRY RUN — not published. To publish (needs the GitHub CLI 'gh', authenticated):
 
-  MOBILE_RELEASE_TOKEN=... tools/release.sh $VERSION_NAME $VERSION_CODE ${note_args}${force_arg}--publish
+  MOBILE_RELEASE_PUBLISH_TOKEN=... tools/release.sh $VERSION_NAME $VERSION_CODE ${note_args}${force_arg}--publish
 
-The publish step POSTs multipart (apk file + metadata) to:
-  POST $API/releases   Authorization: Bearer \$MOBILE_RELEASE_TOKEN
-
-NOTE: confirm the exact field names / whether the APK is uploaded in this call or
-separately against the web project's endpoint — that contract is owned there.
+Publish does:
+  1) gh release create/upload $TAG  -> uploads $APK_FILE_NAME as a release asset
+  2) apkUrl = https://github.com/<owner>/<repo>/releases/download/$TAG/$APK_FILE_NAME
+  3) curl -sIL apkUrl  -> expect HTTP 200
+  4) POST $API/releases  (application/json)
+       Authorization: Bearer \$MOBILE_RELEASE_PUBLISH_TOKEN
+       body: the metadata above, with apkUrl filled in
 EOF
   exit 0
 fi
 
-[ -n "${MOBILE_RELEASE_TOKEN:-}" ] || die "--publish needs MOBILE_RELEASE_TOKEN"
-echo ">> publishing to $API/releases"
-HTTP=$(curl -sS -o /tmp/sc-release-resp.json -w '%{http_code}' -X POST "$API/releases" \
-  -H "Authorization: Bearer $MOBILE_RELEASE_TOKEN" \
-  -F "apk=@$OUT_APK;type=application/vnd.android.package-archive" \
-  -F "metadata=$META")
-echo "HTTP $HTTP"; cat /tmp/sc-release-resp.json; echo
-[ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ] || die "publish failed"
+[ -n "${MOBILE_RELEASE_PUBLISH_TOKEN:-}" ] || die "--publish needs MOBILE_RELEASE_PUBLISH_TOKEN"
+command -v gh >/dev/null || die "--publish needs the GitHub CLI (gh), authenticated"
+
+SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner)" \
+  || die "cannot resolve GitHub repo — run 'gh auth login' / check the 'origin' remote"
+VIS="$(gh repo view --json visibility -q .visibility 2>/dev/null || echo UNKNOWN)"
+[ "$VIS" = "PUBLIC" ] || echo "WARN: repo is $VIS — the Android app downloads apkUrl without a token, so the repo (or a releases mirror) must be PUBLIC." >&2
+APK_URL="https://github.com/$SLUG/releases/download/$TAG/$APK_FILE_NAME"
+
+echo ">> publishing GitHub Release $TAG (asset: $APK_FILE_NAME)"
+if gh release view "$TAG" >/dev/null 2>&1; then
+  gh release upload "$TAG" "$OUT_APK" --clobber
+else
+  notes_file="$(mktemp)"; { [ ${#NOTES[@]} -gt 0 ] && printf '%s\n' "${NOTES[@]}"; } > "$notes_file"
+  gh release create "$TAG" "$OUT_APK" --title "$TAG" --notes-file "$notes_file"
+  rm -f "$notes_file"
+fi
+
+echo ">> verifying asset URL: $APK_URL"
+curl -fsIL -o /dev/null "$APK_URL" || die "release asset not reachable (repo private? asset name mismatch?)"
+
+echo ">> publishing metadata to $API/releases"
+RESP=/tmp/sc-release-resp.json
+HTTP=$(curl -sS -o "$RESP" -w '%{http_code}' -X POST "$API/releases" \
+  -H "Authorization: Bearer $MOBILE_RELEASE_PUBLISH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(build_meta "$APK_URL")")
+echo "HTTP $HTTP"; cat "$RESP" 2>/dev/null; echo
+case "$HTTP" in
+  201) : ;;
+  401) die "401 UNAUTHORIZED — MOBILE_RELEASE_PUBLISH_TOKEN wrong or not configured on the server" ;;
+  409) die "409 DUPLICATE_VERSION — versionCode $VERSION_CODE already published" ;;
+  422) die "422 INVALID_INPUT — $(grep -oE '\"message\":\"[^\"]*\"' "$RESP" || true)" ;;
+  *)   die "publish failed (HTTP $HTTP)" ;;
+esac
 
 echo ">> verifying /latest now reports $VERSION_CODE"
 curl -fsS "$API/latest" | grep -q "\"versionCode\":$VERSION_CODE\b" \
   && echo "OK — released $VERSION_NAME ($VERSION_CODE)" \
-  || echo "WARN: /latest did not report the new versionCode yet (check the registry / 'mark as latest' step)"
+  || echo "WARN: /latest did not report the new versionCode yet (registry cache is 60s)"

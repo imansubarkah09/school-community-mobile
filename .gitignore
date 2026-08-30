@@ -11,3 +11,7 @@ local.properties
 *.jks
 *.keystore
 *.b64
+
+# Local env files
+.env
+.env.*

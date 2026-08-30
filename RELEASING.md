@@ -44,9 +44,36 @@ base64 -w0 school-community-release.jks > keystore.b64   # Linux/Git Bash
 
 Isi `keystore.b64` yang akan ditempel ke secret. Hapus file `.b64` setelah dipakai.
 
-### 4. Tambah GitHub Secrets
+### 4. Pastikan repo `school-community-mobile` **PUBLIC**
 
-Repo GitHub → **Settings → Secrets and variables → Actions → New repository secret**.
+APK di-host sebagai **GitHub Release asset** repo ini. App Android mengunduhnya
+tanpa token, jadi repo harus public. Kalau harus private: buat repo publik
+"releases mirror" dan arahkan `gh release` ke sana (ubah `SLUG` di `tools/release.sh`).
+
+Tidak ada yang perlu di-setup di GitHub Releases — `tools/release.sh` membuat
+release + meng-upload asset otomatis pakai `GITHUB_TOKEN` bawaan Actions.
+
+### 5. Ambil `MOBILE_RELEASE_PUBLISH_TOKEN` dari owner
+
+Endpoint `POST /api/mobile/android/releases` di proyek **`school-community`** dijaga
+env var `MOBILE_RELEASE_PUBLISH_TOKEN` (di Vercel env `school-community`).
+
+- **Minta nilainya ke owner** — jangan generate sendiri (harus sama persis dengan
+  yang sudah di-set di Vercel).
+- Nilai itu dipakai sebagai GitHub Secret di repo mobile (langkah 6).
+
+Kontrak yang dipakai `tools/release.sh` (sesuai `docs/mobile-release-registry.md`):
+build APK → `gh release create/upload v<versionName>` → `apkUrl` =
+`https://github.com/<owner>/school-community-mobile/releases/download/v<ver>/school-community-<ver>.apk`
+→ `curl -sIL apkUrl` (harus 200) → `POST /releases` **`application/json`**
+`{ versionName, versionCode, apkUrl, fileName, applicationName, minimumSupportedVersion,
+releaseNotes, forceUpdate, publishedAt }` header
+`Authorization: Bearer $MOBILE_RELEASE_PUBLISH_TOKEN`. Respons `201` = rilis baru jadi
+`isLatest`. Error: `401` (token), `409` (versionCode dobel), `422` (validasi).
+
+### 6. Tambah GitHub Secrets
+
+Repo GitHub (mobile) → **Settings → Secrets and variables → Actions → New repository secret**.
 Buat 5 secret ini (nama harus persis):
 
 | Nama secret | Isi |
@@ -55,32 +82,12 @@ Buat 5 secret ini (nama harus persis):
 | `SC_KEYSTORE_PASS` | password keystore (yang diminta `keytool`) |
 | `SC_KEY_ALIAS` | `schoolcommunity` (alias dari langkah 2) |
 | `SC_KEY_PASS` | password key (biasanya sama dengan password keystore) |
-| `MOBILE_RELEASE_TOKEN` | token tulis untuk `POST /api/mobile/android/releases` — didapat dari proyek web (lihat B) |
+| `MOBILE_RELEASE_PUBLISH_TOKEN` | dari langkah 5 (minta ke owner) |
 
-### 5. Sisi web / Vercel — token & kontrak API
+`GITHUB_TOKEN` **tidak perlu dibuat** — otomatis tersedia di Actions.
 
-Proyek **`school-community`** (repo & Vercel terpisah) yang punya endpoint tulis.
-Yang perlu dipastikan di sana:
-
-1. **Token tulis.** Endpoint `POST /api/mobile/android/releases` menolak tanpa auth
-   (`401 UNAUTHORIZED`). Cari/buat nilai token di proyek web (biasanya env var seperti
-   `MOBILE_RELEASE_TOKEN` / `RELEASE_API_TOKEN` di **Vercel → Project → Settings →
-   Environment Variables**). Nilai yang **sama** dipakai sebagai GitHub Secret
-   `MOBILE_RELEASE_TOKEN` di langkah 4.
-2. **Kontrak `POST /releases`.** `tools/release.sh` mengirim `multipart/form-data`:
-   field `apk` (file `.apk`) + field `metadata` (JSON). **Cek di kode web** apakah:
-   - nama field-nya memang `apk` dan `metadata`, dan
-   - APK diunggah lewat call ini, atau harus di-upload ke Vercel Blob dulu lalu
-     `apkUrl`-nya dikirim di JSON.
-   Kalau berbeda, sesuaikan fungsi `publish()` di `tools/release.sh` (± 3 baris `curl`).
-3. **`apkUrl` harus URL permanen** (mis. Vercel Blob) dan nama file immutable
-   (`school-community-1.1.0.apk`), bukan `latest.apk`.
-4. **Vercel Blob** (kalau dipakai untuk simpan APK): pastikan store aktif dan
-   `BLOB_READ_WRITE_TOKEN` ada di env Vercel proyek web. Repo mobile **tidak** perlu
-   token Blob — semua upload lewat endpoint web yang sudah terautentikasi.
-
-> Aturan keamanan: repo/aplikasi Android **tidak pernah** menyimpan token tulis atau
-> `BLOB_READ_WRITE_TOKEN`. Hanya baca `GET /latest`.
+> Aturan keamanan: repo/aplikasi Android **tidak pernah** menyimpan
+> `MOBILE_RELEASE_PUBLISH_TOKEN`. Aplikasi hanya baca `GET /latest` (tanpa auth).
 
 ---
 
@@ -109,11 +116,12 @@ export ANDROID_HOME="$HOME/AppData/Local/Android/Sdk"
 export SC_KEYSTORE="/path/school-community-release.jks"
 export SC_KEYSTORE_PASS=... SC_KEY_ALIAS=schoolcommunity SC_KEY_PASS=...
 
-# uji dulu tanpa publish:
+# uji dulu tanpa publish (build + validasi APK saja):
 tools/release.sh 1.1.0 2 --note "Perbaikan unduhan PDF"
 
-# publish beneran:
-MOBILE_RELEASE_TOKEN=xxxxx tools/release.sh 1.1.0 2 --note "Perbaikan unduhan PDF" --publish
+# publish beneran (butuh GitHub CLI `gh` yang sudah `gh auth login`):
+export MOBILE_RELEASE_PUBLISH_TOKEN=xxxxx
+tools/release.sh 1.1.0 2 --note "Perbaikan unduhan PDF" --publish
 ```
 
 Flag: `--force` (update wajib), `--min <versionCode>` (batas versi minimum didukung),
@@ -139,8 +147,9 @@ Lalu di HP yang masih pakai versi lama: buka aplikasi → dialog **"Versi Baru T
 | Tempat | Yang perlu dibuat / diisi |
 |---|---|
 | **Laptop** | keystore `.jks` (sekali), simpan di password manager |
-| **GitHub → Settings → Secrets → Actions** | `SC_KEYSTORE_BASE64`, `SC_KEYSTORE_PASS`, `SC_KEY_ALIAS`, `SC_KEY_PASS`, `MOBILE_RELEASE_TOKEN` |
-| **GitHub → Actions** | jalankan workflow **`release-android`** (`.github/workflows/release-android.yml`) tiap rilis |
-| **Proyek web (repo `school-community`)** | konfirmasi kontrak `POST /api/mobile/android/releases` + nama field |
-| **Vercel (proyek web)** | env var token tulis (mis. `MOBILE_RELEASE_TOKEN`), dan `BLOB_READ_WRITE_TOKEN` bila APK disimpan di Vercel Blob |
-| **Proyek mobile ini** | tidak ada env/secret yang disimpan di repo; hanya baca `GET /latest` |
+| **GitHub (repo mobile)** | pastikan repo **PUBLIC** (host APK) |
+| **GitHub (repo mobile) → Settings → Secrets → Actions** | `SC_KEYSTORE_BASE64`, `SC_KEYSTORE_PASS`, `SC_KEY_ALIAS`, `SC_KEY_PASS`, `MOBILE_RELEASE_PUBLISH_TOKEN` |
+| **GitHub (repo mobile) → Actions** | jalankan workflow **`release-android`** (`.github/workflows/release-android.yml`) tiap rilis |
+| **Owner** | kasih nilai `MOBILE_RELEASE_PUBLISH_TOKEN` (sama dengan env Vercel `school-community`) |
+| **Proyek web (repo `school-community`)** | tidak ada perubahan; kontrak sesuai `docs/mobile-release-registry.md` |
+| **Proyek mobile ini** | tidak ada env/secret di repo; APK di GitHub Release asset; app hanya baca `GET /latest` |

@@ -26,7 +26,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # untuk commit bump versi kembali ke repo
+      contents: write # commit bump versi + buat GitHub Release + upload asset APK
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +35,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # ubuntu-latest sudah membawa Android SDK + build-tools. Kalau build gagal karena
-      # SDK, tambahkan langkah: - uses: android-actions/setup-android@v3
+      # ubuntu-latest sudah membawa Android SDK + build-tools + gh CLI. Kalau build gagal
+      # karena SDK, tambahkan langkah: - uses: android-actions/setup-android@v3
 
       - name: Pulihkan keystore dari secret
         run: printf '%s' "${{ secrets.SC_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
@@ -47,7 +47,8 @@ jobs:
           SC_KEYSTORE_PASS: ${{ secrets.SC_KEYSTORE_PASS }}
           SC_KEY_ALIAS: ${{ secrets.SC_KEY_ALIAS }}
           SC_KEY_PASS: ${{ secrets.SC_KEY_PASS }}
-          MOBILE_RELEASE_TOKEN: ${{ secrets.MOBILE_RELEASE_TOKEN }}
+          MOBILE_RELEASE_PUBLISH_TOKEN: ${{ secrets.MOBILE_RELEASE_PUBLISH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # untuk `gh release` (upload asset APK)
           VNAME: ${{ inputs.versionName }}
           VCODE: ${{ inputs.versionCode }}
           VNOTES: ${{ inputs.notes }}
@@ -63,6 +64,8 @@ jobs:
           chmod +x tools/release.sh gradlew
           tools/release.sh "${args[@]}" --allow-dirty --publish
 
+      # Bump versi di-commit setelah rilis. Tag v<versionName> menunjuk ke commit
+      # sebelum bump — tidak masalah: versi sudah ter-embed di APK & metadata registry.
       - name: Commit bump versi
         run: |
           git config user.name "github-actions[bot]"

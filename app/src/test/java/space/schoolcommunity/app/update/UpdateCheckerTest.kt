@@ -43,7 +43,7 @@ class UpdateCheckerTest {
         val r = ReleaseApi.parse(
             """
             {"platform":"android","versionName":"1.2.0","versionCode":3,
-             "minimumSupportedVersion":2,"apkUrl":"https://blob/school-community-1.2.0.apk",
+             "minimumSupportedVersion":2,"apkUrl":"https://github.com/x/school-community-mobile/releases/download/v1.2.0/school-community-1.2.0.apk",
              "fileName":"school-community-1.2.0.apk","releaseNotes":["Perbaikan bug",""],
              "forceUpdate":true}
             """.trimIndent(),

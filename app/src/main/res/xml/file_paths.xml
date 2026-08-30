@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<paths>
-    <!-- Downloaded update APKs, shared with the system package installer via FileProvider. -->
-    <external-files-path name="updates" path="updates/" />
-</paths>

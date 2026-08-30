@@ -30,8 +30,9 @@ object ReleaseApi {
 
     fun fetchLatest(url: String = LATEST_URL): Release? = try {
         val c = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 8_000
-            readTimeout = 8_000
+            connectTimeout = 5_000
+            readTimeout = 5_000
+            useCaches = false // always fresh; the endpoint's own max-age=60 is enough
             setRequestProperty("Accept", "application/json")
         }
         try {
